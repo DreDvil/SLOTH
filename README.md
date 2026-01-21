@@ -1,58 +1,66 @@
-SLOTH - Scanner Orchestrator
+# SLOTH — Scanner Orchestrator
 
-🛡 Scanner Orchestrator is a terminal-based security scanning orchestrator that unifies multiple popular security tools into a single controlled pipeline with an interactive TUI and clean HTML reports.
+🛡 **SLOTH** is a terminal-based security scanning orchestrator that unifies multiple popular security tools into a single, controlled pipeline with an interactive TUI and clean HTML reports.
 
-Designed for:
-	•	AppSec / DevSecOps engineers
-	•	Pentesters / Red Team
-	•	Security researchers
-	•	Automated reconnaissance & initial security assessment
+---
 
-⸻
+## 🎯 Designed For
 
-✨ Key Features
-	🧩 Multi-tool orchestration
-	🎛 Scan profiles: fast, balanced, deep
-	🐢 Slow scanners isolated (Nikto / Nuclei)
-	📊 Rich TUI (terminal UI):
-	    • live status (queued / running / done / failed)
-	    • progress bar
-	🧾 Clean HTML reports
-	🔁 Continue working after scan completion
-	⚙️ Advanced configuration
-	🔌 Custom scanner selection
-	🚫 No fragile stdout parsing (stable execution)
+- AppSec / DevSecOps engineers  
+- Pentesters / Red Team  
+- Security researchers  
+- Automated reconnaissance & initial security assessment  
 
-⸻
+---
 
-🔧 Integrated Tools
+## ✨ Key Features
 
-Tool	Purpose
-subfinded - Subdomain enumeration
-whatweb - Technology fingerprinting
-sslscan - TLS / SSL analysis
-nmap - Ports, services, scripts
-dirsearch - Directory brute-force
-nikto (slow) - Web vulnerabilities
-nuclei (slow) - Template-based checks
+- 🧩 Multi-tool orchestration  
+- 🎛 Scan profiles: **fast**, **balanced**, **deep**  
+- 🐢 Slow scanners isolated (Nikto / Nuclei)  
+- 📊 Rich TUI (terminal UI):
+  - live status (queued / running / done / failed)
+  - progress bar
+- 🧾 Clean, readable HTML reports
+- 🔁 Continue working after scan completion
+- ⚙️ Advanced configuration
+- 🔌 Custom scanner selection
+- 🚫 No fragile stdout parsing (stable execution)
 
-⸻
+---
 
-🚀 Installation
+## 🔧 Integrated Tools
 
-Requirements
-	•	Python 3.10+
-	•	Linux (Kali / Ubuntu / Debian)
-	•	Installed tools:
-	•	nmap
-	•	subfinder
-	•	whatweb
-	•	sslscan
-	•	dirsearch
-	•	nikto
-	•	nuclei
+| Tool        | Purpose                         |
+|------------|----------------------------------|
+| subfinder  | Subdomain enumeration            |
+| whatweb    | Technology fingerprinting        |
+| sslscan    | TLS / SSL analysis               |
+| nmap       | Ports, services, scripts         |
+| dirsearch  | Directory brute-force            |
+| nikto      | Web vulnerabilities *(slow)*     |
+| nuclei     | Template-based checks *(slow)*   |
 
-Python dependencie
+---
+
+## 🚀 Installation
+
+### Requirements
+
+- Python **3.10+**
+- Linux (Kali / Ubuntu / Debian)
+- Installed tools:
+  - `nmap`
+  - `subfinder`
+  - `whatweb`
+  - `sslscan`
+  - `dirsearch`
+  - `nikto`
+  - `nuclei`
+
+### Python dependencies
+
+```bash
 pip install -r requirements.txt
 
 ⸻
