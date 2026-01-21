@@ -78,20 +78,24 @@ On first launch:
 	- Safe defaults are applied
   
 ---
-📄 Reports
+## 📄 Reports
+
 After each scan, a dedicated directory is created:
 
+```text
 scans/
 └── YYYYMMDD-HHMMSS_target/
     ├── raw/
     │   └── tool outputs and logs
     └── reports/
         └── report.html
-		
+```	
 ---
-Roadmap
-	•	Parallel step execution
-	•	Docker image
-	•	API / JSON output
-	•	Integration with vulnerability management platforms
+
+Roadmap:
+- Parallel step execution
+- Docker image
+- API / JSON output
+- Integration with vulnerability management platforms
+	
 ---
