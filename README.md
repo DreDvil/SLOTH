@@ -1,4 +1,7 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 5f8fe56 (edit README)
 SLOTH - Scanner Orchestrator
 
 🛡 Scanner Orchestrator is a terminal-based security scanning orchestrator that unifies multiple popular security tools into a single controlled pipeline with an interactive TUI and clean HTML reports.
@@ -54,9 +57,12 @@ Requirements
 	•	nuclei
 
 Python dependencies
+<<<<<<< HEAD
 =======
 # Scanner Orchestrator
 >>>>>>> 2eed5b1 (edit README)
+=======
+>>>>>>> 5f8fe56 (edit README)
 
 pip install -r requirements.txt
 
@@ -147,6 +153,51 @@ skip_existing -	Skip existing artifacts
 fail_fast - Stop pipeline on error
 seclists_path - Custom SecLists path
 
+<<<<<<< HEAD
+=======
+
+⸻
+
+🧠 Architecture
+
+High-level architecture
+
+┌────────────────────┐
+│        User        │
+│   (Terminal UI)    │
+└─────────┬──────────┘
+          │
+          ▼
+┌────────────────────┐
+│  Scanner Orchestrator
+│  (Python / Rich UI)│
+└─────────┬──────────┘
+          │
+          ▼
+┌──────────────────────────────────────┐
+│            Scan Pipeline              │
+│                                      │
+│  subfinder  whatweb  sslscan          │
+│  nmap_basic nmap_vulners dirsearch    │
+│                                      │
+│  (optional slow scans)                │
+│  nikto        nuclei                  │
+└─────────┬────────────────────────────┘
+          │
+          ▼
+┌────────────────────┐
+│  Artifacts / Logs  │
+│  HTML Report       │
+└────────────────────┘
+
+Design principles
+	•	Each scanner = isolated step
+	•	Status = exit code + output file
+	•	STDOUT is never parsed
+	•	Resilient to noisy CLI output
+	•	Deterministic results
+
+>>>>>>> 5f8fe56 (edit README)
 ⸻
 
 🛣 Roadmap
@@ -161,4 +212,8 @@ seclists_path - Custom SecLists path
 🤝 Contributing
 
 Pull requests and ideas are welcome.
+<<<<<<< HEAD
 If you use this tool — don’t forget to ⭐ star the repo.
+=======
+If you use this tool — don’t forget to ⭐ star the repo.
+>>>>>>> 5f8fe56 (edit README)
