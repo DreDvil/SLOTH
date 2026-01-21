@@ -62,13 +62,12 @@
 
 ```bash
 pip install -r requirements.txt
-
-⸻
-
-▶️ Usage
-
+```
+---
+### Usage
+```
 python start.py
-
+```
 On first run:
 	•	config.yaml is generated automatically
 	•	Missing tools can be verified/installed from the menu
