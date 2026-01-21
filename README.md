@@ -88,17 +88,17 @@ On first run:
 
 ### ⚡ Scan Profiles
 
-fast (default)
+- fast (default)
 	- quick reconnaissance
 	- short timeouts
 	- Nikto / Nuclei excluded
 
-balanced
+- balanced
 	- deeper checks
 	- moderate timeouts
 	- suitable for regular audits
 
-deep
+- deep
 	- maximum coverage
 	- long timeouts
 	- recommended only for targeted scans
