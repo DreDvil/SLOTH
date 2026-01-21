@@ -87,3 +87,11 @@ scans/
     │   └── tool outputs and logs
     └── reports/
         └── report.html
+		
+---
+Roadmap
+	•	Parallel step execution
+	•	Docker image
+	•	API / JSON output
+	•	Integration with vulnerability management platforms
+---
