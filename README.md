@@ -72,9 +72,9 @@ On first run:
 	•	config.yaml is generated automatically
 	•	Missing tools can be verified/installed from the menu
 
-⸻
+---
 
-🧭 Main Menu
+### 🧭 Main Menu
 
 1  Set target
 2  Choose profile (fast / balanced / deep)
@@ -84,42 +84,41 @@ On first run:
 6  Advanced settings
 0  Exit
 
+---
 
-⸻
-
-⚡ Scan Profiles
+### ⚡ Scan Profiles
 
 fast (default)
-	•	quick reconnaissance
-	•	short timeouts
-	•	Nikto / Nuclei excluded
+	- quick reconnaissance
+	- short timeouts
+	- Nikto / Nuclei excluded
 
 balanced
-	•	deeper checks
-	•	moderate timeouts
-	•	suitable for regular audits
+	- deeper checks
+	- moderate timeouts
+	- suitable for regular audits
 
 deep
-	•	maximum coverage
-	•	long timeouts
-	•	recommended only for targeted scans
+	- maximum coverage
+	- long timeouts
+	- recommended only for targeted scans
 
-⸻
+---
 
-🐢 Slow Scanners Strategy
+### 🐢 Slow Scanners Strategy
 
 Nikto and Nuclei are intentionally separated because they:
-	•	can run for a long time
-	•	may trigger WAF / rate limits
-	•	significantly increase scan duration
+	- can run for a long time
+	- may trigger WAF / rate limits
+	- significantly increase scan duration
 
 They are:
-	•	❌ NOT part of ALL
-	•	▶️ executed explicitly via menu
-	•	⏱ protected by step-level timeouts
-	•	⚠️ clearly marked as slow
+	- ❌ NOT part of ALL
+	- ▶️ executed explicitly via menu
+	- ⏱ protected by step-level timeouts
+	- ⚠️ clearly marked as slow
 
-⸻
+---
 
 📄 Reports
 
@@ -132,15 +131,15 @@ scans/
         └── report.html
 
 HTML report includes:
-	•	step summary table
-	•	execution time
-	•	status per scanner
-	•	scanner output (tail)
-	•	links to raw logs
+	- step summary table
+	- execution time
+	- status per scanner
+	- scanner output (tail)
+	- links to raw logs
 
 No horizontal scrolling, readable on any screen.
 
-⸻
+---
 
 ⚙️ Advanced Settings
 
@@ -149,13 +148,13 @@ skip_existing -	Skip existing artifacts
 fail_fast - Stop pipeline on error
 seclists_path - Custom SecLists path
 
-⸻
+---
 
 🛣 Roadmap
-	•	Parallel step execution
-	•	JSON API
-	•	Export to information aggregator
- 	•	Docker image
-	•	YAML-driven pipelines
+	- Parallel step execution
+	- JSON API
+	- Export to information aggregator
+ 	- Docker image
+	- YAML-driven pipelines
 
-⸻
+---
