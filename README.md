@@ -9,7 +9,7 @@ without fragile stdout parsing or unpredictable behavior.
 
 ---
 
-## 🎯 Designed for
+### 🎯 Designed for
 
 - AppSec / DevSecOps engineers
 - Pentesters / Red Team operators
@@ -18,7 +18,7 @@ without fragile stdout parsing or unpredictable behavior.
 
 ---
 
-## ✨ Key Features
+### ✨ Key Features
 
 - 🧩 Multi-tool orchestration
 - 🎛 Scan profiles: `fast`, `balanced`, `deep`
@@ -34,7 +34,7 @@ without fragile stdout parsing or unpredictable behavior.
 
 ---
 
-## 🔧 Integrated Tools
+### 🔧 Integrated Tools
 
 | Tool       | Purpose                              |
 |------------|--------------------------------------|
@@ -48,7 +48,7 @@ without fragile stdout parsing or unpredictable behavior.
 
 ---
 
-## 🚀 Installation
+### 🚀 Installation
 
 ### Requirements
 
@@ -68,17 +68,19 @@ without fragile stdout parsing or unpredictable behavior.
 ```bash
 pip install -r requirements.txt
 ```
+---
+
 ### ▶️ Usage
 ```
 python start.py
 ```
 On first launch:
-	- config.yaml is generated automatically
-	- Missing tools can be verified or installed from the menu
-	- Safe defaults are applied
+- config.yaml is generated automatically
+- Missing tools can be verified or installed from the menu
+- Safe defaults are applied
   
 ---
-## 📄 Reports
+### 📄 Reports
 
 After each scan, a dedicated directory is created:
 
