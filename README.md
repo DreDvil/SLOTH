@@ -69,20 +69,20 @@ pip install -r requirements.txt
 python start.py
 ```
 On first run:
-	•	config.yaml is generated automatically
-	•	Missing tools can be verified/installed from the menu
+	- config.yaml is generated automatically
+	- Missing tools can be verified/installed from the menu
 
 ---
 
 ### 🧭 Main Menu
 
-1  Set target
-2  Choose profile (fast / balanced / deep)
-3  Select scanners (custom subset)
-4  Run scan (selected / ALL fast)
-5  Run slow scans (Nikto / Nuclei)
-6  Advanced settings
-0  Exit
+	1  Set target
+	2  Choose profile (fast / balanced / deep)
+	3  Select scanners (custom subset)
+	4  Run scan (selected / ALL fast)
+	5  Run slow scans (Nikto / Nuclei)
+	6  Advanced settings
+	0  Exit
 
 ---
 
