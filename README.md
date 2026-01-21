@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 SLOTH - Scanner Orchestrator
 
 🛡 Scanner Orchestrator is a terminal-based security scanning orchestrator that unifies multiple popular security tools into a single controlled pipeline with an interactive TUI and clean HTML reports.
@@ -53,6 +54,9 @@ Requirements
 	•	nuclei
 
 Python dependencies
+=======
+# Scanner Orchestrator
+>>>>>>> 2eed5b1 (edit README)
 
 pip install -r requirements.txt
 

@@ -1,0 +1,5 @@
+rich
+pyyaml
+jinja2
+tldextract
+typer
