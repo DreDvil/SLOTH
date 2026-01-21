@@ -143,48 +143,6 @@ skip_existing -	Skip existing artifacts
 fail_fast - Stop pipeline on error
 seclists_path - Custom SecLists path
 
-
-⸻
-
-🧠 Architecture
-
-High-level architecture
-
-┌────────────────────┐
-│        User        │
-│   (Terminal UI)    │
-└─────────┬──────────┘
-          │
-          ▼
-┌────────────────────┐
-│  Scanner Orchestrator
-│  (Python / Rich UI)│
-└─────────┬──────────┘
-          │
-          ▼
-┌──────────────────────────────────────┐
-│            Scan Pipeline              │
-│                                      │
-│  subfinder  whatweb  sslscan          │
-│  nmap_basic nmap_vulners dirsearch    │
-│                                      │
-│  (optional slow scans)                │
-│  nikto        nuclei                  │
-└─────────┬────────────────────────────┘
-          │
-          ▼
-┌────────────────────┐
-│  Artifacts / Logs  │
-│  HTML Report       │
-└────────────────────┘
-
-Design principles
-	•	Each scanner = isolated step
-	•	Status = exit code + output file
-	•	STDOUT is never parsed
-	•	Resilient to noisy CLI output
-	•	Deterministic results
-
 ⸻
 
 🛣 Roadmap
