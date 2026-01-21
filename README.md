@@ -62,8 +62,28 @@ without fragile stdout parsing or unpredictable behavior.
   - `dirsearch`
   - `nikto`
   - `nuclei`
-
+  
 ### Python dependencies
 
 ```bash
 pip install -r requirements.txt
+```
+### ▶️ Usage
+```
+python start.py
+```
+On first launch:
+	- config.yaml is generated automatically
+	- Missing tools can be verified or installed from the menu
+	- Safe defaults are applied
+  
+---
+📄 Reports
+After each scan, a dedicated directory is created:
+
+scans/
+└── YYYYMMDD-HHMMSS_target/
+    ├── raw/
+    │   └── tool outputs and logs
+    └── reports/
+        └── report.html
