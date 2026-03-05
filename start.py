@@ -10,6 +10,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 import datetime
@@ -207,6 +208,147 @@ def _get_help_text(bin_name: str) -> str:
 
 def help_supports(bin_name: str, flag: str) -> bool:
     return flag in _get_help_text(bin_name)
+
+
+# ---------------------------------------------------------------------------
+# Tool registry & cross-platform install helpers
+# ---------------------------------------------------------------------------
+
+# apt/yum/pacman/brew = package name; pip/go = package/module path; win = install hint
+TOOL_REGISTRY: Dict[str, Dict] = {
+    "nmap": {
+        "name": "Nmap",      "desc": "Port scanner (basic + vulners)",
+        "apt": "nmap",       "yum": "nmap",      "pacman": "nmap",
+        "brew": "nmap",      "pip": None,         "go": None,
+        "win": "choco install nmap  OR  https://nmap.org/download.html",
+    },
+    "nikto": {
+        "name": "Nikto",     "desc": "Web vulnerability scanner (slow)",
+        "apt": "nikto",      "yum": "nikto",     "pacman": None,
+        "brew": "nikto",     "pip": None,         "go": None,
+        "win": "WSL / Kali WSL recommended",
+    },
+    "sslscan": {
+        "name": "SSLScan",   "desc": "TLS/SSL analysis",
+        "apt": "sslscan",    "yum": None,        "pacman": "sslscan",
+        "brew": "sslscan",   "pip": None,         "go": None,
+        "win": "WSL / Kali WSL recommended",
+    },
+    "whatweb": {
+        "name": "WhatWeb",   "desc": "Technology fingerprinting",
+        "apt": "whatweb",    "yum": None,        "pacman": None,
+        "brew": "whatweb",   "pip": None,         "go": None,
+        "win": "WSL / Kali WSL recommended",
+    },
+    "dirsearch": {
+        "name": "Dirsearch", "desc": "Directory brute-force",
+        "apt": "dirsearch",  "yum": None,        "pacman": None,
+        "brew": None,        "pip": "dirsearch",  "go": None,
+        "win": "pip install dirsearch",
+    },
+    "subfinder": {
+        "name": "Subfinder",  "desc": "Subdomain enumeration",
+        "apt": None,          "yum": None,        "pacman": None,
+        "brew": "subfinder",  "pip": None,
+        "go": "github.com/projectdiscovery/subfinder/v2/cmd/subfinder",
+        "win": "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest",
+    },
+    "nuclei": {
+        "name": "Nuclei",    "desc": "Template-based scanner (slow)",
+        "apt": None,         "yum": None,        "pacman": None,
+        "brew": "nuclei",    "pip": None,
+        "go": "github.com/projectdiscovery/nuclei/v3/cmd/nuclei",
+        "win": "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
+    },
+}
+
+_OS_LABELS: Dict[str, str] = {
+    "apt":     "Debian / Ubuntu / Kali  (apt)",
+    "yum":     "RHEL / Fedora / CentOS  (dnf/yum)",
+    "pacman":  "Arch Linux  (pacman)",
+    "brew":    "macOS  (Homebrew)",
+    "win":     "Windows",
+    "unknown": "Linux (unknown package manager)",
+}
+
+
+def detect_os() -> str:
+    """Return package-manager key: 'apt', 'yum', 'pacman', 'brew', 'win', 'unknown'."""
+    if sys.platform == "win32":
+        return "win"
+    if sys.platform == "darwin":
+        return "brew"
+    for pm, key in [("apt-get", "apt"), ("apt", "apt"),
+                    ("dnf", "yum"), ("yum", "yum"),
+                    ("pacman", "pacman")]:
+        if shutil.which(pm):
+            return key
+    return "unknown"
+
+
+def _install_cmd(tool_key: str, os_type: str) -> Optional[str]:
+    """Return a shell command that installs the tool, or None if fully manual."""
+    info = TOOL_REGISTRY.get(tool_key, {})
+    if os_type == "win":
+        return info.get("win")
+    if os_type == "brew":
+        if info.get("brew"):
+            return f"brew install {info['brew']}"
+        if info.get("pip"):
+            return f"pip3 install {info['pip']}"
+        if info.get("go"):
+            return f"go install {info['go']}@latest"
+        return None
+    # Linux variants (apt / yum / pacman / unknown)
+    pm_pkg = info.get(os_type)
+    if pm_pkg:
+        if os_type == "apt":
+            return f"sudo apt-get install -y {pm_pkg}"
+        if os_type == "yum":
+            return f"sudo dnf install -y {pm_pkg}"
+        if os_type == "pacman":
+            return f"sudo pacman -S --noconfirm {pm_pkg}"
+    if info.get("pip"):
+        return f"pip3 install {info['pip']}"
+    if info.get("go"):
+        go = shutil.which("go") or "go"
+        return f"{go} install {info['go']}@latest"
+    return None
+
+
+def get_tool_status() -> List[Dict]:
+    """Return status dict for every tool in TOOL_REGISTRY."""
+    os_type = detect_os()
+    result = []
+    for key, info in TOOL_REGISTRY.items():
+        path  = shutil.which(key)
+        found = path is not None
+        icmd  = None if found else _install_cmd(key, os_type)
+        result.append({
+            "key":         key,
+            "name":        info["name"],
+            "desc":        info["desc"],
+            "found":       found,
+            "path":        path or "",
+            "install_cmd": icmd,
+        })
+    return result
+
+
+def run_install(cmd: str, console: Console) -> bool:
+    """Execute an install command. Returns True on success."""
+    console.print(f"  [dim]$ {cmd}[/]")
+    try:
+        rc = subprocess.run(shlex.split(cmd), text=True).returncode
+        if rc == 0:
+            _get_help_text.cache_clear()   # so newly installed tool is picked up
+            console.print("  [green]Done.[/]")
+            return True
+        console.print(f"  [red]Failed (exit {rc}).[/]")
+        return False
+    except Exception as e:
+        console.print(f"  [red]Error: {e}[/]")
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -457,6 +599,11 @@ def make_dashboard(state: AppState) -> Panel:
         f"seclists={adv.seclists_path or '<auto/none>'}"
     )
     t.add_row("Advanced", adv_str)
+    missing_tools = [TOOL_REGISTRY[k]["name"] for k in TOOL_REGISTRY if not shutil.which(k)]
+    if missing_tools:
+        t.add_row("Tools", f"[red]missing: {', '.join(missing_tools)}[/]  →  menu 7 to install")
+    else:
+        t.add_row("Tools", "[green]all installed[/]")
     return Panel(Align.left(t), border_style="grey50", padding=(0, 1))
 
 
@@ -470,6 +617,7 @@ def make_menu() -> Panel:
     t.add_row("4", "Run scan (selected / ALL fast)")
     t.add_row("5", "Run slow scans (Nikto/Nuclei)")
     t.add_row("6", "Advanced settings")
+    t.add_row("7", "Check / install tools")
     t.add_row("0", "Exit")
     return Panel(Align.left(t), border_style="grey50", padding=(0, 1))
 
@@ -836,6 +984,67 @@ def menu_advanced(state: AppState, console: Console) -> None:
         )
 
 
+def menu_check_tools(console: Console) -> None:
+    """Interactive tool check + one-click install screen."""
+    while True:
+        console.clear()
+        statuses    = get_tool_status()
+        os_type     = detect_os()
+        os_label    = _OS_LABELS.get(os_type, os_type)
+        missing     = [s for s in statuses if not s["found"]]
+        installable = [s for s in missing  if s["install_cmd"]]
+
+        # ── Status table ──────────────────────────────────────────────────
+        t = _small_table("Tool Status")
+        t.add_column("Tool",   width=11, no_wrap=True, style="bold")
+        t.add_column("Status", width=8,  no_wrap=True)
+        t.add_column("Path / Install command", overflow="fold")
+        for s in statuses:
+            if s["found"]:
+                t.add_row(s["name"], "[green]found[/]",   s["path"])
+            else:
+                hint = s["install_cmd"] or "[grey50]see README / install manually[/]"
+                t.add_row(s["name"], "[red]missing[/]", hint)
+
+        # ── Action table ──────────────────────────────────────────────────
+        actions = _small_table("Actions")
+        actions.add_column("#",      style="bold", width=3, no_wrap=True)
+        actions.add_column("Action", overflow="fold")
+        if installable:
+            actions.add_row("1", f"Install ALL missing  ({len(installable)} tool(s))")
+            for i, s in enumerate(installable, start=2):
+                actions.add_row(str(i), f"Install {s['name']}  —  {s['install_cmd']}")
+        actions.add_row("0", "Back")
+
+        footer = Text(f"Detected platform: {os_label}", style="grey50")
+        console.print(Panel(Group(Align.left(t), footer), border_style="grey50", padding=(0, 1)))
+        console.print(Panel(Align.left(actions), border_style="grey50", padding=(0, 1)))
+
+        if not missing:
+            console.print("[green]All tools are installed.[/]")
+            console.input("\nPress Enter to return to menu...")
+            return
+
+        ch = prompt(console, "Choose", "0").strip()
+        if ch == "0":
+            return
+        if ch == "1" and installable:
+            for s in installable:
+                console.print(f"\n[bold]Installing {s['name']}...[/]")
+                run_install(s["install_cmd"], console)
+            console.input("\nPress Enter to continue...")
+        else:
+            try:
+                idx = int(ch) - 2
+                if 0 <= idx < len(installable):
+                    s = installable[idx]
+                    console.print(f"\n[bold]Installing {s['name']}...[/]")
+                    run_install(s["install_cmd"], console)
+                    console.input("\nPress Enter to continue...")
+            except (ValueError, IndexError):
+                pass
+
+
 def main_loop() -> None:
     console = Console()
     cfg = load_cfg(Path("config.yaml"))
@@ -866,6 +1075,8 @@ def main_loop() -> None:
                 console.input("\nPress Enter to return to menu...")
         elif ch == "6":
             menu_advanced(state, console)
+        elif ch == "7":
+            menu_check_tools(console)
         elif ch == "0":
             break
 
