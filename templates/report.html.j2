@@ -20,7 +20,8 @@ th{background:#f9fafb}
 <div class="card">
   <div><span class="muted">Target:</span> <b>{{ summary.target }}</b></div>
   <div><span class="muted">Profile:</span> <b>{{ summary.profile }}</b></div>
-  <div><span class="muted">Started UTC:</span> <b>{{ summary.started_utc }}</b></div>
+  <div><span class="muted">Started UTC:</span> <b>{{ summary.started_utc }}</b>{% if summary.finished_utc %} &nbsp;→&nbsp; <b>{{ summary.finished_utc }}</b>{% endif %}</div>
+  <div><span class="muted">Parallel:</span> <b>{{ summary.parallel if summary.parallel is defined else '—' }}</b></div>
   <div class="muted">Run dir: {{ summary.run_dir }}</div>
 </div>
 <div class="card">

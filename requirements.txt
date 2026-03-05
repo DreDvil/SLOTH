@@ -3,3 +3,8 @@ pyyaml
 jinja2
 tldextract
 typer
+
+# API server (needed for `python start.py serve`)
+fastapi
+uvicorn[standard]
+pydantic
