@@ -460,12 +460,19 @@ def _install_cmd(tool_key: str, os_type: str) -> Optional[str]:
 
 
 def _find_tool_bin(key: str) -> Optional[str]:
-    """Find a tool's binary, checking all known aliases (e.g. testssl / testssl.sh)."""
+    """Find a tool's binary, checking PATH aliases and GOPATH/bin for go-installed tools."""
+    import os
     info = TOOL_REGISTRY.get(key, {})
     for name in info.get("bins", [key]):
         p = shutil.which(name)
         if p:
             return p
+        # go install puts binaries in $GOPATH/bin (default ~/go/bin), not necessarily in PATH
+        if info.get("go"):
+            gopath = os.environ.get("GOPATH", str(Path.home() / "go"))
+            candidate = Path(gopath) / "bin" / name
+            if candidate.exists() and candidate.is_file():
+                return str(candidate)
     return None
 
 
