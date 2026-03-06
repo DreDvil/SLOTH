@@ -288,6 +288,7 @@ TOOL_REGISTRY: Dict[str, Dict] = {
         "apt": None,          "yum": None,       "pacman": None,
         "brew": "subfinder",  "pip": None,
         "go": "github.com/projectdiscovery/subfinder/v2/cmd/subfinder",
+        "runtime": "go",
         "win": "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest",
     },
     "nuclei": {
@@ -295,6 +296,7 @@ TOOL_REGISTRY: Dict[str, Dict] = {
         "apt": None,          "yum": None,       "pacman": None,
         "brew": "nuclei",     "pip": None,
         "go": "github.com/projectdiscovery/nuclei/v3/cmd/nuclei",
+        "runtime": "go",
         "win": "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
     },
     # ── New tools ──────────────────────────────────────────────────────────
@@ -303,6 +305,7 @@ TOOL_REGISTRY: Dict[str, Dict] = {
         "apt": None,          "yum": None,       "pacman": None,
         "brew": "httpx",      "pip": None,
         "go": "github.com/projectdiscovery/httpx/cmd/httpx",
+        "runtime": "go",
         "win": "go install github.com/projectdiscovery/httpx/cmd/httpx@latest",
     },
     "wafw00f": {
@@ -316,6 +319,7 @@ TOOL_REGISTRY: Dict[str, Dict] = {
         "apt": None,          "yum": None,       "pacman": None,
         "brew": "katana",     "pip": None,
         "go": "github.com/projectdiscovery/katana/cmd/katana",
+        "runtime": "go",
         "win": "go install github.com/projectdiscovery/katana/cmd/katana@latest",
     },
     "testssl": {
@@ -330,6 +334,7 @@ TOOL_REGISTRY: Dict[str, Dict] = {
         "apt": None,          "yum": None,       "pacman": None,
         "brew": "dalfox",     "pip": None,
         "go": "github.com/hahwul/dalfox/v2",
+        "runtime": "go",
         "win": "go install github.com/hahwul/dalfox/v2@latest",
     },
     "sqlmap": {
@@ -343,6 +348,7 @@ TOOL_REGISTRY: Dict[str, Dict] = {
         "apt": None,          "yum": None,       "pacman": None,
         "brew": "dnsx",       "pip": None,
         "go": "github.com/projectdiscovery/dnsx/cmd/dnsx",
+        "runtime": "go",
         "win": "go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest",
     },
 }
@@ -354,6 +360,17 @@ _OS_LABELS: Dict[str, str] = {
     "brew":    "macOS  (Homebrew)",
     "win":     "Windows",
     "unknown": "Linux (unknown package manager)",
+}
+
+RUNTIME_REGISTRY: Dict[str, Dict] = {
+    "go": {
+        "name": "Go",
+        "check": "go",
+        "desc": "Go language runtime (required for ProjectDiscovery tools & Dalfox)",
+        "apt": "golang-go",   "yum": "golang",   "pacman": "go",
+        "brew": "go",         "pip": None,
+        "win": "https://golang.org/dl/  OR  choco install golang",
+    },
 }
 
 
@@ -369,6 +386,47 @@ def detect_os() -> str:
         if shutil.which(pm):
             return key
     return "unknown"
+
+
+def _check_runtime(runtime_key: str) -> bool:
+    """Return True if a language runtime binary is available."""
+    info = RUNTIME_REGISTRY.get(runtime_key, {})
+    return shutil.which(info.get("check", runtime_key)) is not None
+
+
+def _runtime_install_cmd(runtime_key: str, os_type: str) -> Optional[str]:
+    """Return install command for a language runtime, or None if manual."""
+    info = RUNTIME_REGISTRY.get(runtime_key, {})
+    if os_type == "win":
+        return info.get("win")
+    if os_type == "brew":
+        pkg = info.get("brew")
+        return f"brew install {pkg}" if pkg else None
+    pkg = info.get(os_type)
+    if pkg:
+        if os_type == "apt":    return f"sudo apt-get install -y {pkg}"
+        if os_type == "yum":    return f"sudo dnf install -y {pkg}"
+        if os_type == "pacman": return f"sudo pacman -S --noconfirm {pkg}"
+    return None
+
+
+def get_runtime_status() -> List[Dict]:
+    """Return status dict for every runtime in RUNTIME_REGISTRY."""
+    os_type = detect_os()
+    result  = []
+    for key, info in RUNTIME_REGISTRY.items():
+        path  = shutil.which(info.get("check", key)) or ""
+        found = bool(path)
+        icmd  = None if found else _runtime_install_cmd(key, os_type)
+        result.append({
+            "key":         key,
+            "name":        info["name"],
+            "desc":        info["desc"],
+            "found":       found,
+            "path":        path,
+            "install_cmd": icmd,
+        })
+    return result
 
 
 def _install_cmd(tool_key: str, os_type: str) -> Optional[str]:
@@ -1246,29 +1304,80 @@ def menu_check_tools(console: Console) -> None:
     while True:
         console.clear()
         statuses    = get_tool_status()
+        rt_statuses = get_runtime_status()
         os_type     = detect_os()
         os_label    = _OS_LABELS.get(os_type, os_type)
         missing     = [s for s in statuses if not s["found"]]
-        installable = [s for s in missing  if s["install_cmd"]]
 
+        # Runtimes needed only by currently-missing tools
+        needed_rt_keys = {
+            TOOL_REGISTRY[s["key"]].get("runtime")
+            for s in missing
+            if TOOL_REGISTRY.get(s["key"], {}).get("runtime")
+        }
+        missing_rt     = [s for s in rt_statuses if s["key"] in needed_rt_keys and not s["found"]]
+        installable_rt = [s for s in missing_rt if s["install_cmd"]]
+
+        # Build unified ordered install list: runtimes first, then tools
+        # Tools blocked by a missing runtime are included but flagged
+        all_items: List[Dict] = []
+        for s in installable_rt:
+            all_items.append({**s, "_kind": "runtime"})
+        for s in missing:
+            if not s["install_cmd"]:
+                continue
+            tool_rt = TOOL_REGISTRY.get(s["key"], {}).get("runtime")
+            blocked = bool(tool_rt and not _check_runtime(tool_rt))
+            all_items.append({**s, "_kind": "tool", "_blocked": blocked, "_rt": tool_rt})
+
+        # ── Runtime dependencies table (only if any needed) ─────────────────
+        if missing_rt:
+            rt_t = _small_table("Runtime Dependencies")
+            rt_t.add_column("Runtime", width=11, no_wrap=True, style="bold")
+            rt_t.add_column("Status",  width=8,  no_wrap=True)
+            rt_t.add_column("Path / Install command", overflow="fold")
+            for s in rt_statuses:
+                if s["key"] not in needed_rt_keys:
+                    continue
+                if s["found"]:
+                    rt_t.add_row(s["name"], "[green]found[/]", s["path"])
+                else:
+                    hint = s["install_cmd"] or "[grey50]install manually[/]"
+                    rt_t.add_row(s["name"], "[red]missing[/]", hint)
+            console.print(Panel(Align.left(rt_t), border_style="yellow", padding=(0, 1)))
+
+        # ── Tool status table ────────────────────────────────────────────────
         t = _small_table("Tool Status")
         t.add_column("Tool",   width=11, no_wrap=True, style="bold")
         t.add_column("Status", width=8,  no_wrap=True)
         t.add_column("Path / Install command", overflow="fold")
         for s in statuses:
             if s["found"]:
-                t.add_row(s["name"], "[green]found[/]",   s["path"])
+                t.add_row(s["name"], "[green]found[/]", s["path"])
             else:
-                hint = s["install_cmd"] or "[grey50]see README / install manually[/]"
+                tool_rt = TOOL_REGISTRY.get(s["key"], {}).get("runtime")
+                if tool_rt and not _check_runtime(tool_rt):
+                    rt_name = RUNTIME_REGISTRY.get(tool_rt, {}).get("name", tool_rt)
+                    hint = f"[yellow]needs {rt_name} runtime — install it first[/]"
+                else:
+                    hint = s["install_cmd"] or "[grey50]see README / install manually[/]"
                 t.add_row(s["name"], "[red]missing[/]", hint)
 
+        # ── Actions table ────────────────────────────────────────────────────
         actions = _small_table("Actions")
         actions.add_column("#",      style="bold", width=3, no_wrap=True)
         actions.add_column("Action", overflow="fold")
-        if installable:
-            actions.add_row("1", f"Install ALL missing  ({len(installable)} tool(s))")
-            for i, s in enumerate(installable, start=2):
-                actions.add_row(str(i), f"Install {s['name']}  —  {s['install_cmd']}")
+        n_available = sum(1 for x in all_items if not x.get("_blocked"))
+        if all_items:
+            actions.add_row("1", f"Install ALL available  ({n_available} item(s))")
+            for i, item in enumerate(all_items, start=2):
+                if item["_kind"] == "runtime":
+                    actions.add_row(str(i), f"[yellow]Install runtime {item['name']}[/]  —  {item['install_cmd']}")
+                elif item.get("_blocked"):
+                    rt_name = RUNTIME_REGISTRY.get(item["_rt"], {}).get("name", item["_rt"])
+                    actions.add_row(str(i), f"[dim]Install {item['name']}  (blocked: {rt_name} missing)[/]")
+                else:
+                    actions.add_row(str(i), f"Install {item['name']}  —  {item['install_cmd']}")
         actions.add_row("0", "Back")
 
         footer = Text(f"Detected platform: {os_label}", style="grey50")
@@ -1283,19 +1392,28 @@ def menu_check_tools(console: Console) -> None:
         ch = prompt(console, "Choose", "0").strip()
         if ch == "0":
             return
-        if ch == "1" and installable:
-            for s in installable:
-                console.print(f"\n[bold]Installing {s['name']}...[/]")
-                run_install(s["install_cmd"], console)
+        if ch == "1" and all_items:
+            for item in all_items:
+                if item.get("_blocked"):
+                    continue
+                label = f"runtime {item['name']}" if item["_kind"] == "runtime" else item["name"]
+                console.print(f"\n[bold]Installing {label}...[/]")
+                run_install(item["install_cmd"], console)
             console.input("\nPress Enter to continue...")
         else:
             try:
                 idx = int(ch) - 2
-                if 0 <= idx < len(installable):
-                    s = installable[idx]
-                    console.print(f"\n[bold]Installing {s['name']}...[/]")
-                    run_install(s["install_cmd"], console)
-                    console.input("\nPress Enter to continue...")
+                if 0 <= idx < len(all_items):
+                    item = all_items[idx]
+                    if item.get("_blocked"):
+                        rt_name = RUNTIME_REGISTRY.get(item["_rt"], {}).get("name", item["_rt"])
+                        console.print(f"[red]Cannot install {item['name']}: {rt_name} runtime is missing.[/]")
+                        console.input("\nPress Enter to continue...")
+                    else:
+                        label = f"runtime {item['name']}" if item["_kind"] == "runtime" else item["name"]
+                        console.print(f"\n[bold]Installing {label}...[/]")
+                        run_install(item["install_cmd"], console)
+                        console.input("\nPress Enter to continue...")
             except (ValueError, IndexError):
                 pass
 
