@@ -1333,9 +1333,9 @@ def menu_check_tools(console: Console) -> None:
         # ── Runtime dependencies table (only if any needed) ─────────────────
         if missing_rt:
             rt_t = _small_table("Runtime Dependencies")
-            rt_t.add_column("Runtime", width=11, no_wrap=True, style="bold")
-            rt_t.add_column("Status",  width=8,  no_wrap=True)
-            rt_t.add_column("Path / Install command", overflow="fold")
+            rt_t.add_column("Runtime", no_wrap=True, style="bold")
+            rt_t.add_column("Status",  width=8, no_wrap=True)
+            rt_t.add_column("Path / Install command")
             for s in rt_statuses:
                 if s["key"] not in needed_rt_keys:
                     continue
@@ -1344,13 +1344,13 @@ def menu_check_tools(console: Console) -> None:
                 else:
                     hint = s["install_cmd"] or "[grey50]install manually[/]"
                     rt_t.add_row(s["name"], "[red]missing[/]", hint)
-            console.print(Panel(Align.left(rt_t), border_style="yellow", padding=(0, 1)))
+            console.print(Panel(Align.left(rt_t), border_style="yellow", padding=(0, 1), expand=False))
 
         # ── Tool status table ────────────────────────────────────────────────
         t = _small_table("Tool Status")
-        t.add_column("Tool",   width=11, no_wrap=True, style="bold")
-        t.add_column("Status", width=8,  no_wrap=True)
-        t.add_column("Path / Install command", overflow="fold")
+        t.add_column("Tool",   no_wrap=True, style="bold")
+        t.add_column("Status", width=8, no_wrap=True)
+        t.add_column("Path / Install command")
         for s in statuses:
             if s["found"]:
                 t.add_row(s["name"], "[green]found[/]", s["path"])
@@ -1358,7 +1358,7 @@ def menu_check_tools(console: Console) -> None:
                 tool_rt = TOOL_REGISTRY.get(s["key"], {}).get("runtime")
                 if tool_rt and not _check_runtime(tool_rt):
                     rt_name = RUNTIME_REGISTRY.get(tool_rt, {}).get("name", tool_rt)
-                    hint = f"[yellow]needs {rt_name} runtime — install it first[/]"
+                    hint = f"[yellow]needs {rt_name} — select to auto-install[/]"
                 else:
                     hint = s["install_cmd"] or "[grey50]see README / install manually[/]"
                 t.add_row(s["name"], "[red]missing[/]", hint)
@@ -1366,7 +1366,7 @@ def menu_check_tools(console: Console) -> None:
         # ── Actions table ────────────────────────────────────────────────────
         actions = _small_table("Actions")
         actions.add_column("#",      style="bold", width=3, no_wrap=True)
-        actions.add_column("Action", overflow="fold")
+        actions.add_column("Action")
         n_available = sum(1 for x in all_items if not x.get("_blocked"))
         if all_items:
             actions.add_row("1", f"Install ALL available  ({n_available} item(s))")
@@ -1375,14 +1375,14 @@ def menu_check_tools(console: Console) -> None:
                     actions.add_row(str(i), f"[yellow]Install runtime {item['name']}[/]  —  {item['install_cmd']}")
                 elif item.get("_blocked"):
                     rt_name = RUNTIME_REGISTRY.get(item["_rt"], {}).get("name", item["_rt"])
-                    actions.add_row(str(i), f"[dim]Install {item['name']}  (blocked: {rt_name} missing)[/]")
+                    actions.add_row(str(i), f"Install {item['name']}  [dim](will install {rt_name} first)[/]")
                 else:
                     actions.add_row(str(i), f"Install {item['name']}  —  {item['install_cmd']}")
         actions.add_row("0", "Back")
 
         footer = Text(f"Detected platform: {os_label}", style="grey50")
-        console.print(Panel(Group(Align.left(t), footer), border_style="grey50", padding=(0, 1)))
-        console.print(Panel(Align.left(actions), border_style="grey50", padding=(0, 1)))
+        console.print(Panel(Group(Align.left(t), footer), border_style="grey50", padding=(0, 1), expand=False))
+        console.print(Panel(Align.left(actions), border_style="grey50", padding=(0, 1), expand=False))
 
         if not missing:
             console.print("[green]All tools are installed.[/]")
@@ -1393,11 +1393,21 @@ def menu_check_tools(console: Console) -> None:
         if ch == "0":
             return
         if ch == "1" and all_items:
+            # Step 1: install all missing runtimes first
             for item in all_items:
-                if item.get("_blocked"):
+                if item["_kind"] == "runtime":
+                    console.print(f"\n[bold]Installing runtime {item['name']}...[/]")
+                    run_install(item["install_cmd"], console)
+            # Step 2: install tools (re-check runtime availability after installs)
+            for item in all_items:
+                if item["_kind"] != "tool":
                     continue
-                label = f"runtime {item['name']}" if item["_kind"] == "runtime" else item["name"]
-                console.print(f"\n[bold]Installing {label}...[/]")
+                tool_rt = item.get("_rt")
+                if tool_rt and not _check_runtime(tool_rt):
+                    rt_name = RUNTIME_REGISTRY.get(tool_rt, {}).get("name", tool_rt)
+                    console.print(f"[yellow]Skipping {item['name']}: {rt_name} still not available.[/]")
+                    continue
+                console.print(f"\n[bold]Installing {item['name']}...[/]")
                 run_install(item["install_cmd"], console)
             console.input("\nPress Enter to continue...")
         else:
@@ -1406,8 +1416,19 @@ def menu_check_tools(console: Console) -> None:
                 if 0 <= idx < len(all_items):
                     item = all_items[idx]
                     if item.get("_blocked"):
-                        rt_name = RUNTIME_REGISTRY.get(item["_rt"], {}).get("name", item["_rt"])
-                        console.print(f"[red]Cannot install {item['name']}: {rt_name} runtime is missing.[/]")
+                        rt_key  = item["_rt"]
+                        rt_name = RUNTIME_REGISTRY.get(rt_key, {}).get("name", rt_key)
+                        rt_cmd  = _runtime_install_cmd(rt_key, os_type)
+                        console.print(f"\n[yellow]{item['name']} requires {rt_name}, which is not installed.[/]")
+                        if rt_cmd:
+                            ans = prompt(console, f"Install {rt_name} now? [y/N]", "N").strip().lower()
+                            if ans == "y":
+                                console.print(f"\n[bold]Installing runtime {rt_name}...[/]")
+                                if run_install(rt_cmd, console):
+                                    console.print(f"\n[bold]Installing {item['name']}...[/]")
+                                    run_install(item["install_cmd"], console)
+                        else:
+                            console.print(f"[red]Install {rt_name} manually, then retry.[/]")
                         console.input("\nPress Enter to continue...")
                     else:
                         label = f"runtime {item['name']}" if item["_kind"] == "runtime" else item["name"]
