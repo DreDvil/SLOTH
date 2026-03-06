@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Scanner Orchestrator (SPEC-1 MVP)
-# v16: parallel steps, JSON API (serve command), scan CLI command, help cache
+# v17: +httpx, wafw00f, katana, testssl, dalfox, sqlmap, dnsx; artifact chaining
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ from rich import box
 app = typer.Typer(add_completion=False, help="Scanner Orchestrator (SPEC-1 MVP)")
 
 DEFAULT_CFG_YAML = """\
-# Scanner Orchestrator (SPEC-1 MVP) config (v16)
+# Scanner Orchestrator (SPEC-1 MVP) config (v17)
 report:
   # html | json | both
   format: both
@@ -58,6 +58,9 @@ profiles:
     step_timeout_sec: 900
     nikto_timeout_sec: 600
     nuclei_timeout_sec: 600
+    dalfox_timeout_sec: 1200
+    sqlmap_timeout_sec: 1800
+    testssl_timeout_sec: 600
     nmap_basic:
       timing: "-T4"
       ports: "-F"
@@ -70,10 +73,22 @@ profiles:
       severity: "high,critical"
       rate_limit: 50
       concurrency: 10
+    katana:
+      depth: 2
+      js_crawl: true
+      max_response_size: 2
+    dalfox:
+      workers: 10
+      timeout: 10
+    testssl:
+      severity: "HIGH"
   balanced:
     step_timeout_sec: 1800
     nikto_timeout_sec: 900
     nuclei_timeout_sec: 1200
+    dalfox_timeout_sec: 1800
+    sqlmap_timeout_sec: 3600
+    testssl_timeout_sec: 900
     nmap_basic:
       timing: "-T3"
       ports: "-p 80,443,8080,8443"
@@ -86,10 +101,22 @@ profiles:
       severity: "medium,high,critical"
       rate_limit: 100
       concurrency: 25
+    katana:
+      depth: 4
+      js_crawl: true
+      max_response_size: 4
+    dalfox:
+      workers: 20
+      timeout: 15
+    testssl:
+      severity: "MEDIUM"
   deep:
     step_timeout_sec: 7200
     nikto_timeout_sec: 1800
     nuclei_timeout_sec: 3600
+    dalfox_timeout_sec: 3600
+    sqlmap_timeout_sec: 7200
+    testssl_timeout_sec: 1800
     nmap_basic:
       timing: "-T3"
       ports: "-p-"
@@ -102,6 +129,15 @@ profiles:
       severity: "low,medium,high,critical"
       rate_limit: 200
       concurrency: 50
+    katana:
+      depth: 6
+      js_crawl: true
+      max_response_size: 8
+    dalfox:
+      workers: 40
+      timeout: 30
+    testssl:
+      severity: "LOW"
 """
 
 
@@ -194,7 +230,7 @@ def run_cmd(cmd: List[str], out_file: Path, timeout_sec: int) -> Tuple[int, str]
     return (proc.returncode or 0, tail_file(out_file, 200))
 
 
-# Cache help text per binary (avoids spawning N subprocesses for N flags)
+# Cache help text per binary (one subprocess call per binary, not per flag)
 @lru_cache(maxsize=64)
 def _get_help_text(bin_name: str) -> str:
     p = which(bin_name)
@@ -215,50 +251,99 @@ def help_supports(bin_name: str, flag: str) -> bool:
 # ---------------------------------------------------------------------------
 
 # apt/yum/pacman/brew = package name; pip/go = package/module path; win = install hint
+# bins = list of possible binary names (first found wins); omit to use key as name
 TOOL_REGISTRY: Dict[str, Dict] = {
     "nmap": {
-        "name": "Nmap",      "desc": "Port scanner (basic + vulners)",
-        "apt": "nmap",       "yum": "nmap",      "pacman": "nmap",
-        "brew": "nmap",      "pip": None,         "go": None,
+        "name": "Nmap",       "desc": "Port scanner (basic + vulners)",
+        "apt": "nmap",        "yum": "nmap",     "pacman": "nmap",
+        "brew": "nmap",       "pip": None,        "go": None,
         "win": "choco install nmap  OR  https://nmap.org/download.html",
     },
     "nikto": {
-        "name": "Nikto",     "desc": "Web vulnerability scanner (slow)",
-        "apt": "nikto",      "yum": "nikto",     "pacman": None,
-        "brew": "nikto",     "pip": None,         "go": None,
+        "name": "Nikto",      "desc": "Web vulnerability scanner (slow)",
+        "apt": "nikto",       "yum": "nikto",    "pacman": None,
+        "brew": "nikto",      "pip": None,        "go": None,
         "win": "WSL / Kali WSL recommended",
     },
     "sslscan": {
-        "name": "SSLScan",   "desc": "TLS/SSL analysis",
-        "apt": "sslscan",    "yum": None,        "pacman": "sslscan",
-        "brew": "sslscan",   "pip": None,         "go": None,
+        "name": "SSLScan",    "desc": "TLS/SSL analysis",
+        "apt": "sslscan",     "yum": None,       "pacman": "sslscan",
+        "brew": "sslscan",    "pip": None,        "go": None,
         "win": "WSL / Kali WSL recommended",
     },
     "whatweb": {
-        "name": "WhatWeb",   "desc": "Technology fingerprinting",
-        "apt": "whatweb",    "yum": None,        "pacman": None,
-        "brew": "whatweb",   "pip": None,         "go": None,
+        "name": "WhatWeb",    "desc": "Technology fingerprinting",
+        "apt": "whatweb",     "yum": None,       "pacman": None,
+        "brew": "whatweb",    "pip": None,        "go": None,
         "win": "WSL / Kali WSL recommended",
     },
     "dirsearch": {
-        "name": "Dirsearch", "desc": "Directory brute-force",
-        "apt": "dirsearch",  "yum": None,        "pacman": None,
-        "brew": None,        "pip": "dirsearch",  "go": None,
+        "name": "Dirsearch",  "desc": "Directory brute-force",
+        "apt": "dirsearch",   "yum": None,       "pacman": None,
+        "brew": None,         "pip": "dirsearch", "go": None,
         "win": "pip install dirsearch",
     },
     "subfinder": {
         "name": "Subfinder",  "desc": "Subdomain enumeration",
-        "apt": None,          "yum": None,        "pacman": None,
+        "apt": None,          "yum": None,       "pacman": None,
         "brew": "subfinder",  "pip": None,
         "go": "github.com/projectdiscovery/subfinder/v2/cmd/subfinder",
         "win": "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest",
     },
     "nuclei": {
-        "name": "Nuclei",    "desc": "Template-based scanner (slow)",
-        "apt": None,         "yum": None,        "pacman": None,
-        "brew": "nuclei",    "pip": None,
+        "name": "Nuclei",     "desc": "Template-based scanner (slow)",
+        "apt": None,          "yum": None,       "pacman": None,
+        "brew": "nuclei",     "pip": None,
         "go": "github.com/projectdiscovery/nuclei/v3/cmd/nuclei",
         "win": "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
+    },
+    # ── New tools ──────────────────────────────────────────────────────────
+    "httpx": {
+        "name": "httpx",      "desc": "Live host prober (reads subdomains.txt)",
+        "apt": None,          "yum": None,       "pacman": None,
+        "brew": "httpx",      "pip": None,
+        "go": "github.com/projectdiscovery/httpx/cmd/httpx",
+        "win": "go install github.com/projectdiscovery/httpx/cmd/httpx@latest",
+    },
+    "wafw00f": {
+        "name": "wafw00f",    "desc": "WAF detection",
+        "apt": "wafw00f",     "yum": None,       "pacman": None,
+        "brew": "wafw00f",    "pip": "wafw00f",   "go": None,
+        "win": "pip install wafw00f",
+    },
+    "katana": {
+        "name": "Katana",     "desc": "JS-aware web crawler",
+        "apt": None,          "yum": None,       "pacman": None,
+        "brew": "katana",     "pip": None,
+        "go": "github.com/projectdiscovery/katana/cmd/katana",
+        "win": "go install github.com/projectdiscovery/katana/cmd/katana@latest",
+    },
+    "testssl": {
+        "name": "testssl",    "desc": "Deep TLS analysis",
+        "bins": ["testssl", "testssl.sh"],   # Kali installs as testssl.sh
+        "apt": "testssl.sh",  "yum": None,       "pacman": "testssl",
+        "brew": "testssl",    "pip": None,        "go": None,
+        "win": "WSL / Kali WSL recommended",
+    },
+    "dalfox": {
+        "name": "Dalfox",     "desc": "XSS parameter fuzzing (slow)",
+        "apt": None,          "yum": None,       "pacman": None,
+        "brew": "dalfox",     "pip": None,
+        "go": "github.com/hahwul/dalfox/v2",
+        "win": "go install github.com/hahwul/dalfox/v2@latest",
+    },
+    "sqlmap": {
+        "name": "sqlmap",     "desc": "SQL injection detection (slow)",
+        "apt": "sqlmap",      "yum": "sqlmap",   "pacman": "sqlmap",
+        "brew": "sqlmap",     "pip": "sqlmap",    "go": None,
+        "win": "pip install sqlmap",
+    },
+    "dnsx": {
+        "name": "dnsx",       "desc": "DNS resolution & brute-force",
+        "apt": None,          "yum": None,       "pacman": None,
+        "brew": "dnsx",       "pip": None,
+        "go": "github.com/projectdiscovery/dnsx/cmd/dnsx",
+        "win": "go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest",
     },
 }
 
@@ -316,12 +401,22 @@ def _install_cmd(tool_key: str, os_type: str) -> Optional[str]:
     return None
 
 
+def _find_tool_bin(key: str) -> Optional[str]:
+    """Find a tool's binary, checking all known aliases (e.g. testssl / testssl.sh)."""
+    info = TOOL_REGISTRY.get(key, {})
+    for name in info.get("bins", [key]):
+        p = shutil.which(name)
+        if p:
+            return p
+    return None
+
+
 def get_tool_status() -> List[Dict]:
     """Return status dict for every tool in TOOL_REGISTRY."""
     os_type = detect_os()
-    result = []
+    result  = []
     for key, info in TOOL_REGISTRY.items():
-        path  = shutil.which(key)
+        path  = _find_tool_bin(key)
         found = path is not None
         icmd  = None if found else _install_cmd(key, os_type)
         result.append({
@@ -341,7 +436,7 @@ def run_install(cmd: str, console: Console) -> bool:
     try:
         rc = subprocess.run(shlex.split(cmd), text=True).returncode
         if rc == 0:
-            _get_help_text.cache_clear()   # so newly installed tool is picked up
+            _get_help_text.cache_clear()   # newly installed tool will be picked up
             console.print("  [green]Done.[/]")
             return True
         console.print(f"  [red]Failed (exit {rc}).[/]")
@@ -358,34 +453,34 @@ def run_install(cmd: str, console: Console) -> bool:
 def cmd_nmap_basic(target: str, out_dir: Path, profile: Dict) -> Tuple[List[str], List[Path], Path]:
     raw_dir = out_dir / "raw" / "nmap_basic"
     raw_dir.mkdir(parents=True, exist_ok=True)
-    base = raw_dir / "out"
+    base      = raw_dir / "out"
     artifacts = [base.with_suffix(".nmap"), base.with_suffix(".gnmap"), base.with_suffix(".xml")]
-    host = extract_host(target)
-    timing = profile.get("timing", "-T4")
-    ports = profile.get("ports", "-F")
-    extra = profile.get("extra", ["-sC", "-sV", "-Pn"])
-    cmd = ["nmap", timing] + ports.split() + extra + ["-oA", str(base), host]
+    host      = extract_host(target)
+    timing    = profile.get("timing", "-T4")
+    ports     = profile.get("ports", "-F")
+    extra     = profile.get("extra", ["-sC", "-sV", "-Pn"])
+    cmd       = ["nmap", timing] + ports.split() + extra + ["-oA", str(base), host]
     return cmd, artifacts, (raw_dir / "out.txt")
 
 
 def cmd_nmap_vulners(target: str, out_dir: Path, profile: Dict) -> Tuple[List[str], List[Path], Path]:
     raw_dir = out_dir / "raw" / "nmap_vulners"
     raw_dir.mkdir(parents=True, exist_ok=True)
-    base = raw_dir / "out"
+    base      = raw_dir / "out"
     artifacts = [base.with_suffix(".nmap"), base.with_suffix(".gnmap"), base.with_suffix(".xml")]
-    host = extract_host(target)
-    timing = profile.get("timing", "-T4")
-    ports = profile.get("ports", "-p 80,443")
-    extra = profile.get("extra", ["-Pn", "--script", "vulners"])
-    cmd = ["nmap", timing] + ports.split() + extra + ["-oA", str(base), host]
+    host      = extract_host(target)
+    timing    = profile.get("timing", "-T4")
+    ports     = profile.get("ports", "-p 80,443")
+    extra     = profile.get("extra", ["-Pn", "--script", "vulners"])
+    cmd       = ["nmap", timing] + ports.split() + extra + ["-oA", str(base), host]
     return cmd, artifacts, (raw_dir / "out.txt")
 
 
 def cmd_subdomains(target: str, out_dir: Path) -> Tuple[List[str], List[Path], Path, Optional[str]]:
-    raw_dir = out_dir / "raw" / "subdomains"
+    raw_dir  = out_dir / "raw" / "subdomains"
     raw_dir.mkdir(parents=True, exist_ok=True)
-    out_txt = raw_dir / "subdomains.txt"
-    domain = registrable_domain_from_target(target)
+    out_txt  = raw_dir / "subdomains.txt"
+    domain   = registrable_domain_from_target(target)
     if not domain:
         return ([], [out_txt], (raw_dir / "out.txt"), None)
     cmd = ["subfinder", "-silent", "-d", domain, "-o", str(out_txt)]
@@ -393,10 +488,10 @@ def cmd_subdomains(target: str, out_dir: Path) -> Tuple[List[str], List[Path], P
 
 
 def cmd_whatweb(target: str, out_dir: Path) -> Tuple[List[str], List[Path], Path]:
-    raw_dir = out_dir / "raw" / "whatweb"
+    raw_dir  = out_dir / "raw" / "whatweb"
     raw_dir.mkdir(parents=True, exist_ok=True)
     out_json = raw_dir / "out.json"
-    cmd = ["whatweb", "-a", "3", "--log-json", str(out_json), target]
+    cmd      = ["whatweb", "-a", "3", "--log-json", str(out_json), target]
     return cmd, [out_json], (raw_dir / "out.txt")
 
 
@@ -404,8 +499,8 @@ def cmd_sslscan(target: str, out_dir: Path) -> Tuple[List[str], List[Path], Path
     raw_dir = out_dir / "raw" / "sslscan"
     raw_dir.mkdir(parents=True, exist_ok=True)
     out_xml = raw_dir / "out.xml"
-    host = extract_host(target)
-    cmd = ["sslscan", "--xml=" + str(out_xml), f"{host}:443"]
+    host    = extract_host(target)
+    cmd     = ["sslscan", "--xml=" + str(out_xml), f"{host}:443"]
     return cmd, [out_xml], (raw_dir / "out.txt")
 
 
@@ -423,46 +518,33 @@ def find_seclists_wordlist(seclists_path: Path) -> Optional[Path]:
 def cmd_dirsearch(
     target: str, out_dir: Path, cfg: Dict, profile_name: str, seclists_path: Optional[Path]
 ) -> Tuple[List[str], List[Path], Path]:
-    raw_dir = out_dir / "raw" / "dirsearch"
+    raw_dir  = out_dir / "raw" / "dirsearch"
     raw_dir.mkdir(parents=True, exist_ok=True)
     out_json = raw_dir / "out.json"
-    out_txt = raw_dir / "out.txt"
-    ds = cfg_get(cfg, "dirsearch", default={}) or {}
-    mode = ds.get("wordlist_mode", "default")
+    out_txt  = raw_dir / "out.txt"
+    ds       = cfg_get(cfg, "dirsearch", default={}) or {}
+    mode     = ds.get("wordlist_mode", "default")
     include_status = ds.get("include_status")
     exclude_status = ds.get("exclude_status")
-    follow = bool(ds.get("follow_redirects", True))
+    follow   = bool(ds.get("follow_redirects", True))
     max_redir = int(ds.get("max_redirects", 3))
-    threads = ds.get(f"threads_{profile_name}", ds.get("threads_fast", 25))
-    threads = str(int(threads))
+    threads  = str(int(ds.get(f"threads_{profile_name}", ds.get("threads_fast", 25))))
 
-    cmd = [
-        "dirsearch",
-        "-u", target,
-        "-e", "php,asp,aspx,html,js,txt",
-        "-f",
-        "--format", "json",
-        "-o", str(out_json),
-    ]
-
+    cmd = ["dirsearch", "-u", target, "-e", "php,asp,aspx,html,js,txt",
+           "-f", "--format", "json", "-o", str(out_json)]
     if help_supports("dirsearch", "--quiet"):
         cmd += ["--quiet"]
     if help_supports("dirsearch", "--no-color"):
         cmd += ["--no-color"]
     if help_supports("dirsearch", "-t"):
         cmd += ["-t", threads]
-
     if mode == "seclists":
         if not seclists_path:
             raise RuntimeError("SecLists path is required for seclists wordlist_mode")
         wl = find_seclists_wordlist(seclists_path)
         if not wl:
-            raise RuntimeError(
-                f"Dirsearch wordlist not found under SecLists: "
-                f"{seclists_path}/Discovery/Web-Content/*directory-list-2.3-medium*"
-            )
+            raise RuntimeError(f"Wordlist not found under {seclists_path}/Discovery/Web-Content/")
         cmd += ["-w", str(wl)]
-
     if include_status:
         if help_supports("dirsearch", "-i"):
             cmd += ["-i", str(include_status)]
@@ -473,12 +555,10 @@ def cmd_dirsearch(
             cmd += ["-x", str(exclude_status)]
         elif help_supports("dirsearch", "--exclude-status"):
             cmd += ["--exclude-status", str(exclude_status)]
-
     if follow and help_supports("dirsearch", "--follow-redirects"):
         cmd += ["--follow-redirects"]
     if help_supports("dirsearch", "--max-redirects"):
         cmd += ["--max-redirects", str(max_redir)]
-
     return cmd, [out_json], out_txt
 
 
@@ -486,7 +566,7 @@ def cmd_nikto(target: str, out_dir: Path) -> Tuple[List[str], List[Path], Path]:
     raw_dir = out_dir / "raw" / "nikto"
     raw_dir.mkdir(parents=True, exist_ok=True)
     out_txt = raw_dir / "out.txt"
-    cmd = ["nikto", "-h", target, "-output", str(out_txt)]
+    cmd     = ["nikto", "-h", target, "-output", str(out_txt)]
     return cmd, [out_txt], out_txt
 
 
@@ -494,34 +574,139 @@ def cmd_nuclei(target: str, out_dir: Path, profile_cfg: Dict) -> Tuple[List[str]
     raw_dir = out_dir / "raw" / "nuclei"
     raw_dir.mkdir(parents=True, exist_ok=True)
     out_txt = raw_dir / "out.txt"
-    cmd = ["nuclei", "-u", target]
-
+    cmd     = ["nuclei", "-u", target]
     if help_supports("nuclei", "-jsonl"):
         cmd += ["-jsonl", "-o", str(out_txt)]
     elif help_supports("nuclei", "-json"):
         cmd += ["-json", "-o", str(out_txt)]
     else:
         cmd += ["-o", str(out_txt)]
-
     sev = profile_cfg.get("severity")
     if sev and help_supports("nuclei", "-severity"):
         cmd += ["-severity", str(sev)]
-
     rl = profile_cfg.get("rate_limit")
     if rl:
         if help_supports("nuclei", "-rl"):
             cmd += ["-rl", str(int(rl))]
         elif help_supports("nuclei", "-rate-limit"):
             cmd += ["-rate-limit", str(int(rl))]
-
     conc = profile_cfg.get("concurrency")
     if conc and help_supports("nuclei", "-c"):
         cmd += ["-c", str(int(conc))]
-
     if help_supports("nuclei", "-silent"):
         cmd += ["-silent"]
-
     return cmd, [out_txt], out_txt
+
+
+# ── New tools ────────────────────────────────────────────────────────────────
+
+def _wait_for_artifact(path: Path, max_sec: int = 120) -> bool:
+    """Block until path exists and is non-empty, or timeout. Returns True if found."""
+    deadline = time.time() + max_sec
+    while time.time() < deadline:
+        if path.exists() and path.stat().st_size > 0:
+            return True
+        time.sleep(2)
+    return False
+
+
+def cmd_httpx(out_dir: Path) -> Tuple[List[str], List[Path], Path, bool]:
+    """Probe live hosts from subfinder's subdomains.txt; waits up to 120 s in parallel mode."""
+    raw_dir   = out_dir / "raw" / "httpx"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    out_txt   = raw_dir / "alive_hosts.txt"
+    log_file  = raw_dir / "out.txt"
+    subs_file = out_dir / "raw" / "subdomains" / "subdomains.txt"
+    if not _wait_for_artifact(subs_file):
+        return [], [out_txt], log_file, False
+    cmd = ["httpx", "-l", str(subs_file), "-o", str(out_txt), "-silent"]
+    if help_supports("httpx", "-threads"):
+        cmd += ["-threads", "50"]
+    elif help_supports("httpx", "-t"):
+        cmd += ["-t", "50"]
+    return cmd, [out_txt], log_file, True
+
+
+def cmd_dnsx(out_dir: Path) -> Tuple[List[str], List[Path], Path, bool]:
+    """Resolve subdomains from subfinder's subdomains.txt; waits up to 120 s in parallel mode."""
+    raw_dir   = out_dir / "raw" / "dnsx"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    out_txt   = raw_dir / "resolved.txt"
+    log_file  = raw_dir / "out.txt"
+    subs_file = out_dir / "raw" / "subdomains" / "subdomains.txt"
+    if not _wait_for_artifact(subs_file):
+        return [], [out_txt], log_file, False
+    cmd = ["dnsx", "-l", str(subs_file), "-o", str(out_txt), "-silent"]
+    return cmd, [out_txt], log_file, True
+
+
+def cmd_wafw00f(target: str, out_dir: Path) -> Tuple[List[str], List[Path], Path]:
+    """Detect WAF. Exit 0 = WAF found, exit 1 = no WAF (both are valid results)."""
+    raw_dir  = out_dir / "raw" / "wafw00f"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    log_file = raw_dir / "out.txt"
+    cmd      = ["wafw00f", "-a", target]   # -a = check all WAFs
+    return cmd, [log_file], log_file
+
+
+def cmd_katana(target: str, out_dir: Path, profile_cfg: Dict) -> Tuple[List[str], List[Path], Path]:
+    """JS-aware web crawler; writes urls.txt consumed by dalfox."""
+    raw_dir  = out_dir / "raw" / "katana"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    out_txt  = raw_dir / "urls.txt"
+    log_file = raw_dir / "out.txt"
+    cmd      = ["katana", "-u", target, "-o", str(out_txt), "-silent"]
+    depth    = profile_cfg.get("depth", 3)
+    if help_supports("katana", "-d"):
+        cmd += ["-d", str(depth)]
+    if profile_cfg.get("js_crawl", True) and help_supports("katana", "-jc"):
+        cmd += ["-jc"]
+    max_resp = profile_cfg.get("max_response_size")
+    if max_resp and help_supports("katana", "-mrs"):
+        cmd += ["-mrs", str(max_resp)]
+    return cmd, [out_txt], log_file
+
+
+def cmd_testssl(target: str, out_dir: Path, profile_cfg: Dict) -> Tuple[List[str], List[Path], Path]:
+    """Deep TLS analysis (testssl / testssl.sh); replaces sslscan in deep profile."""
+    raw_dir  = out_dir / "raw" / "testssl"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    out_json = raw_dir / "out.json"
+    log_file = raw_dir / "out.txt"
+    host     = extract_host(target)
+    severity = profile_cfg.get("severity", "MEDIUM")
+    bin_path = shutil.which("testssl") or shutil.which("testssl.sh") or "testssl"
+    cmd      = [bin_path, "--jsonfile", str(out_json), "--severity", severity, f"{host}:443"]
+    return cmd, [out_json], log_file
+
+
+def cmd_dalfox(target: str, out_dir: Path, profile_cfg: Dict) -> Tuple[List[str], List[Path], Path]:
+    """XSS fuzzer; uses katana's urls.txt when available, else falls back to target URL."""
+    raw_dir   = out_dir / "raw" / "dalfox"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    out_txt   = raw_dir / "out.txt"
+    urls_file = out_dir / "raw" / "katana" / "urls.txt"
+    if urls_file.exists() and urls_file.stat().st_size > 0:
+        cmd = ["dalfox", "file", str(urls_file), "-o", str(out_txt), "--silence"]
+    else:
+        cmd = ["dalfox", "url",  target,          "-o", str(out_txt), "--silence"]
+    workers = profile_cfg.get("workers", 20)
+    if help_supports("dalfox", "--worker"):
+        cmd += ["--worker", str(workers)]
+    timeout = profile_cfg.get("timeout", 10)
+    if help_supports("dalfox", "--timeout"):
+        cmd += ["--timeout", str(timeout)]
+    return cmd, [out_txt], out_txt
+
+
+def cmd_sqlmap(target: str, out_dir: Path) -> Tuple[List[str], List[Path], Path]:
+    """SQL injection detection via sqlmap --batch."""
+    raw_dir    = out_dir / "raw" / "sqlmap"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = raw_dir / "results"
+    log_file   = raw_dir / "out.txt"
+    cmd        = ["sqlmap", "-u", target, "--batch", "--output-dir", str(output_dir)]
+    return cmd, [output_dir], log_file
 
 
 # ---------------------------------------------------------------------------
@@ -533,15 +718,28 @@ SCANNERS: List[Tuple[str, str, str]] = [
     ("nmap_vulners","Nmap (vuln/vulners)",         "medium"),
     ("dirsearch",   "Dirsearch",                  "fast"),
     ("subdomains",  "Subdomain enumeration",       "fast"),
+    ("dnsx",        "dnsx (DNS resolve)",          "fast"),
+    ("httpx",       "httpx (live host probe)",     "fast"),
     ("whatweb",     "WhatWeb",                    "fast"),
+    ("wafw00f",     "WAF detection",              "fast"),
     ("sslscan",     "SSLScan (443)",              "fast"),
+    ("katana",      "Katana (JS crawler)",        "medium"),
+    ("testssl",     "testssl (deep TLS)",         "medium"),
     ("nikto",       "Nikto (slow)",               "slow"),
     ("nuclei",      "Nuclei (slow)",              "slow"),
+    ("dalfox",      "Dalfox XSS (slow)",          "slow"),
+    ("sqlmap",      "sqlmap SQLi (slow)",          "slow"),
     ("all",         "ALL (recommended fast recon)","fast"),
 ]
 
-RECOMMENDED_ORDER_FAST = ["subdomains", "whatweb", "sslscan", "nmap_basic", "nmap_vulners", "dirsearch"]
-SLOW_STEPS = ["nikto", "nuclei"]
+# httpx and dnsx wait for subdomains.txt → keep them after subdomains
+# wafw00f before dirsearch to detect WAF before brute-force
+RECOMMENDED_ORDER_FAST = [
+    "subdomains", "dnsx", "httpx",
+    "whatweb", "wafw00f", "sslscan",
+    "nmap_basic", "nmap_vulners", "dirsearch",
+]
+SLOW_STEPS = ["nikto", "nuclei", "dalfox", "sqlmap"]
 
 STATUS_STYLE = {
     "queued":  "white",
@@ -592,14 +790,12 @@ def make_dashboard(state: AppState) -> Panel:
     t.add_row("Output dir", state.out_root)
     adv = state.advanced
     adv_str = (
-        f"parallel={adv.parallel}, "
-        f"concurrency={adv.concurrency_targets}, "
-        f"skip_existing={adv.skip_existing}, "
-        f"fail_fast={adv.fail_fast}, "
+        f"parallel={adv.parallel}, concurrency={adv.concurrency_targets}, "
+        f"skip_existing={adv.skip_existing}, fail_fast={adv.fail_fast}, "
         f"seclists={adv.seclists_path or '<auto/none>'}"
     )
     t.add_row("Advanced", adv_str)
-    missing_tools = [TOOL_REGISTRY[k]["name"] for k in TOOL_REGISTRY if not shutil.which(k)]
+    missing_tools = [TOOL_REGISTRY[k]["name"] for k in TOOL_REGISTRY if not _find_tool_bin(k)]
     if missing_tools:
         t.add_row("Tools", f"[red]missing: {', '.join(missing_tools)}[/]  →  menu 7 to install")
     else:
@@ -615,7 +811,7 @@ def make_menu() -> Panel:
     t.add_row("2", "Choose profile (fast/balanced/deep)")
     t.add_row("3", "Select scanners (custom subset)")
     t.add_row("4", "Run scan (selected / ALL fast)")
-    t.add_row("5", "Run slow scans (Nikto/Nuclei)")
+    t.add_row("5", "Run slow scans (Nikto / Nuclei / Dalfox / sqlmap)")
     t.add_row("6", "Advanced settings")
     t.add_row("7", "Check / install tools")
     t.add_row("0", "Exit")
@@ -627,11 +823,11 @@ def make_scanners_table() -> Panel:
     t.add_column("ID",    style="bold", width=3,  no_wrap=True)
     t.add_column("Key",   width=14, no_wrap=True)
     t.add_column("Name",  overflow="fold")
-    t.add_column("Speed", width=6, no_wrap=True)
+    t.add_column("Speed", width=7, no_wrap=True)
     for i, (k, name, speed) in enumerate(SCANNERS, start=1):
-        style = "red" if speed == "slow" else "white"
-        t.add_row(str(i), k, f"[{style}]{name}[/{style}]" if speed == "slow" else name, speed)
-    cap = Text("Tip: ALL runs only fast recon steps. Use menu item 5 for slow scans.", style="grey50")
+        colour = "red" if speed == "slow" else ("yellow" if speed == "medium" else "white")
+        t.add_row(str(i), k, f"[{colour}]{name}[/{colour}]", speed)
+    cap = Text("Tip: ALL runs only fast recon steps. Use menu 5 for slow scans.", style="grey50")
     return Panel(Group(Align.left(t), cap), border_style="grey50", padding=(0, 1))
 
 
@@ -645,9 +841,9 @@ def parse_scanner_choice(s: str) -> List[str]:
     s = s.strip()
     if not s:
         return []
-    parts = [p.strip() for p in s.split(",") if p.strip()]
-    keys: List[str] = []
+    parts    = [p.strip() for p in s.split(",") if p.strip()]
     all_keys = [x[0] for x in SCANNERS]
+    keys: List[str] = []
     for p in parts:
         if p.isdigit():
             idx = int(p) - 1
@@ -684,15 +880,21 @@ def step_timeout_global(cfg: Dict, profile: str) -> int:
 
 def step_timeout_for(cfg: Dict, profile: str, step: str) -> int:
     base = step_timeout_global(cfg, profile)
-    if step == "nikto":
-        return int(cfg_get(cfg, "profiles", profile, "nikto_timeout_sec", default=base))
-    if step == "nuclei":
-        return int(cfg_get(cfg, "profiles", profile, "nuclei_timeout_sec", default=base))
+    _map = {
+        "nikto":   "nikto_timeout_sec",
+        "nuclei":  "nuclei_timeout_sec",
+        "dalfox":  "dalfox_timeout_sec",
+        "sqlmap":  "sqlmap_timeout_sec",
+        "testssl": "testssl_timeout_sec",
+    }
+    key = _map.get(step)
+    if key:
+        return int(cfg_get(cfg, "profiles", profile, key, default=base))
     return base
 
 
 def ensure_run_dirs(state: AppState) -> Path:
-    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S")
+    ts      = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S")
     run_dir = Path(state.out_root).expanduser().resolve() / f"{ts}_{slugify(state.target)}"
     (run_dir / "raw").mkdir(parents=True, exist_ok=True)
     (run_dir / "reports").mkdir(parents=True, exist_ok=True)
@@ -700,36 +902,81 @@ def ensure_run_dirs(state: AppState) -> Path:
 
 
 def build_step_cmd(step: str, state: AppState, cfg: Dict, run_dir: Path):
+    """Return (cmd, artifacts, log_file, can_run, desc) for a given step."""
     prof = cfg_get(cfg, "profiles", state.profile, default={}) or {}
+
     if step == "nmap_basic":
         cmd, artifacts, log_file = cmd_nmap_basic(state.target, run_dir, prof.get("nmap_basic", {}))
         return (cmd, artifacts, log_file, True, f"nmap basic ({state.profile})")
+
     if step == "nmap_vulners":
         cmd, artifacts, log_file = cmd_nmap_vulners(state.target, run_dir, prof.get("nmap_vulners", {}))
         return (cmd, artifacts, log_file, True, f"nmap vulners ({state.profile})")
+
     if step == "subdomains":
         cmd, artifacts, log_file, dom = cmd_subdomains(state.target, run_dir)
         if not dom:
             return ([], artifacts, log_file, False, "subdomains skipped (no domain)")
         return (cmd, artifacts, log_file, True, f"subfinder on {dom}")
+
     if step == "whatweb":
         cmd, artifacts, log_file = cmd_whatweb(state.target, run_dir)
         return (cmd, artifacts, log_file, True, "whatweb")
+
     if step == "sslscan":
         cmd, artifacts, log_file = cmd_sslscan(state.target, run_dir)
         return (cmd, artifacts, log_file, True, "sslscan 443")
+
     if step == "dirsearch":
         seclists = Path(state.advanced.seclists_path).expanduser() if state.advanced.seclists_path else None
         cmd, artifacts, log_file = cmd_dirsearch(state.target, run_dir, cfg, state.profile, seclists)
         return (cmd, artifacts, log_file, True, "dirsearch (quiet json)")
+
     if step == "nikto":
         cmd, artifacts, log_file = cmd_nikto(state.target, run_dir)
         return (cmd, artifacts, log_file, True, "nikto (slow)")
+
     if step == "nuclei":
         nuclei_cfg = prof.get("nuclei", {}) or {}
         cmd, artifacts, log_file = cmd_nuclei(state.target, run_dir, nuclei_cfg)
         return (cmd, artifacts, log_file, True, "nuclei (slow)")
-    raise ValueError(step)
+
+    # ── New tools ─────────────────────────────────────────────────────────
+
+    if step == "httpx":
+        cmd, artifacts, log_file, can_run = cmd_httpx(run_dir)
+        desc = "httpx (live host probe)" if can_run else "httpx skipped (no subdomains.txt)"
+        return (cmd, artifacts, log_file, can_run, desc)
+
+    if step == "dnsx":
+        cmd, artifacts, log_file, can_run = cmd_dnsx(run_dir)
+        desc = "dnsx (DNS resolve)" if can_run else "dnsx skipped (no subdomains.txt)"
+        return (cmd, artifacts, log_file, can_run, desc)
+
+    if step == "wafw00f":
+        cmd, artifacts, log_file = cmd_wafw00f(state.target, run_dir)
+        return (cmd, artifacts, log_file, True, "wafw00f (WAF detection)")
+
+    if step == "katana":
+        katana_cfg = prof.get("katana", {}) or {}
+        cmd, artifacts, log_file = cmd_katana(state.target, run_dir, katana_cfg)
+        return (cmd, artifacts, log_file, True, "katana (JS crawl)")
+
+    if step == "testssl":
+        testssl_cfg = prof.get("testssl", {}) or {}
+        cmd, artifacts, log_file = cmd_testssl(state.target, run_dir, testssl_cfg)
+        return (cmd, artifacts, log_file, True, "testssl (deep TLS)")
+
+    if step == "dalfox":
+        dalfox_cfg = prof.get("dalfox", {}) or {}
+        cmd, artifacts, log_file = cmd_dalfox(state.target, run_dir, dalfox_cfg)
+        return (cmd, artifacts, log_file, True, "dalfox (XSS fuzz)")
+
+    if step == "sqlmap":
+        cmd, artifacts, log_file = cmd_sqlmap(state.target, run_dir)
+        return (cmd, artifacts, log_file, True, "sqlmap (SQL injection)")
+
+    raise ValueError(f"Unknown step: {step}")
 
 
 # ---------------------------------------------------------------------------
@@ -744,9 +991,9 @@ def write_summary_json(run_dir: Path, summary: Dict) -> Path:
 
 def render_html_report(run_dir: Path, summary: Dict) -> Path:
     tpl_dir = Path(__file__).parent / "templates"
-    env = Environment(loader=FileSystemLoader(str(tpl_dir)), autoescape=select_autoescape(["html"]))
-    tpl = env.get_template("report.html.j2")
-    out = run_dir / "reports" / "report.html"
+    env     = Environment(loader=FileSystemLoader(str(tpl_dir)), autoescape=select_autoescape(["html"]))
+    tpl     = env.get_template("report.html.j2")
+    out     = run_dir / "reports" / "report.html"
     out.write_text(tpl.render(summary=summary), encoding="utf-8")
     return out
 
@@ -755,16 +1002,30 @@ def render_html_report(run_dir: Path, summary: Dict) -> Path:
 # Core runner (sequential or parallel)
 # ---------------------------------------------------------------------------
 
+def _step_outcome(step: str, rc: int, base_desc: str) -> Tuple[str, bool]:
+    """Return (display_desc, is_success) for a completed step.
+
+    Handles tools where a non-zero exit code is still a valid result
+    (e.g. wafw00f exits 1 when no WAF is found).
+    """
+    if step == "wafw00f":
+        if rc == 0:
+            return "wafw00f: WAF detected", True
+        if rc == 1:
+            return "wafw00f: no WAF found", True
+    return base_desc, (rc == 0)
+
+
 def run_steps(steps: List[str], state: AppState, cfg: Dict, console: Console, title_suffix: str = "") -> Path:
     if not state.target:
         console.print("[red]Target is not set.[/]")
         raise RuntimeError("target not set")
 
-    run_dir = ensure_run_dirs(state)
-    rows: Dict[str, Dict] = {s: {"status": "queued", "elapsed": "-", "desc": ""} for s in steps}
+    run_dir      = ensure_run_dirs(state)
+    rows: Dict[str, Dict]   = {s: {"status": "queued", "elapsed": "-", "desc": ""} for s in steps}
     steps_results: Dict[str, Dict] = {}
-    lock = threading.Lock()
-    stop_event = threading.Event()
+    lock         = threading.Lock()
+    stop_event   = threading.Event()
 
     def steps_table() -> Table:
         t = Table(
@@ -776,7 +1037,7 @@ def run_steps(steps: List[str], state: AppState, cfg: Dict, console: Console, ti
         t.add_column("Elapsed",       width=9,  no_wrap=True)
         t.add_column("Note / Output", overflow="fold", width=48)
         for s in steps:
-            st = rows[s]["status"]
+            st    = rows[s]["status"]
             style = STATUS_STYLE.get(st, "white")
             t.add_row(s, f"[{style}]{st}[/{style}]", rows[s]["elapsed"], rows[s]["desc"])
         return t
@@ -804,9 +1065,6 @@ def run_steps(steps: List[str], state: AppState, cfg: Dict, console: Console, ti
         "steps":       [],
     }
 
-    # ------------------------------------------------------------------
-    # Worker: runs one step, updates rows + steps_results (thread-safe)
-    # ------------------------------------------------------------------
     def run_one(s: str) -> None:
         if stop_event.is_set():
             with lock:
@@ -829,7 +1087,9 @@ def run_steps(steps: List[str], state: AppState, cfg: Dict, console: Console, ti
         with lock:
             rows[s]["desc"] = desc
 
-        if state.advanced.skip_existing and artifacts and all(p.exists() for p in artifacts):
+        if state.advanced.skip_existing and artifacts and all(
+            (p.exists() if p.is_file() else (p.exists() and any(p.iterdir()))) for p in artifacts
+        ):
             with lock:
                 rows[s]["status"] = "skipped"
                 rows[s]["desc"]   = "skipped (existing artifacts)"
@@ -858,11 +1118,13 @@ def run_steps(steps: List[str], state: AppState, cfg: Dict, console: Console, ti
         rc, tail = run_cmd(cmd, log_file, timeout_sec=timeout)
         elapsed  = int(time.time() - t0)
 
-        status = "done" if rc == 0 else "failed"
+        final_desc, ok = _step_outcome(s, rc, desc)
+        status = "done" if ok else "failed"
+
         with lock:
             rows[s]["status"]  = status
             rows[s]["elapsed"] = f"{elapsed}s"
-            rows[s]["desc"]    = desc
+            rows[s]["desc"]    = final_desc
 
         steps_results[s] = {
             "step":        s,
@@ -877,9 +1139,6 @@ def run_steps(steps: List[str], state: AppState, cfg: Dict, console: Console, ti
         if status == "failed" and state.advanced.fail_fast:
             stop_event.set()
 
-    # ------------------------------------------------------------------
-    # Live display + execution (sequential or parallel)
-    # ------------------------------------------------------------------
     with Live(render_ui(), refresh_per_second=8, console=console, transient=False) as live:
         if state.advanced.parallel and len(steps) > 1:
             max_workers = min(len(steps), 6)
@@ -899,10 +1158,8 @@ def run_steps(steps: List[str], state: AppState, cfg: Dict, console: Console, ti
                 live.update(render_ui())
                 if stop_event.is_set():
                     break
-
         live.update(render_ui())
 
-    # Preserve original step order in summary
     for s in steps:
         if s in steps_results:
             summary["steps"].append(steps_results[s])
@@ -962,10 +1219,10 @@ def menu_advanced(state: AppState, console: Console) -> None:
     t.add_column("#",       style="bold", width=3,  no_wrap=True)
     t.add_column("Setting", width=18, no_wrap=True)
     t.add_column("Value",   overflow="fold")
-    t.add_row("1", "parallel",    str(adv.parallel))
-    t.add_row("2", "concurrency", str(adv.concurrency_targets))
+    t.add_row("1", "parallel",      str(adv.parallel))
+    t.add_row("2", "concurrency",   str(adv.concurrency_targets))
     t.add_row("3", "skip_existing", str(adv.skip_existing))
-    t.add_row("4", "fail_fast",   str(adv.fail_fast))
+    t.add_row("4", "fail_fast",     str(adv.fail_fast))
     t.add_row("5", "seclists_path", adv.seclists_path or "")
     t.add_row("0", "back", "")
     console.print(Panel(Align.left(t), border_style="grey50", padding=(0, 1)))
@@ -985,7 +1242,7 @@ def menu_advanced(state: AppState, console: Console) -> None:
 
 
 def menu_check_tools(console: Console) -> None:
-    """Interactive tool check + one-click install screen."""
+    """Interactive tool-check + one-click install screen."""
     while True:
         console.clear()
         statuses    = get_tool_status()
@@ -994,7 +1251,6 @@ def menu_check_tools(console: Console) -> None:
         missing     = [s for s in statuses if not s["found"]]
         installable = [s for s in missing  if s["install_cmd"]]
 
-        # ── Status table ──────────────────────────────────────────────────
         t = _small_table("Tool Status")
         t.add_column("Tool",   width=11, no_wrap=True, style="bold")
         t.add_column("Status", width=8,  no_wrap=True)
@@ -1006,7 +1262,6 @@ def menu_check_tools(console: Console) -> None:
                 hint = s["install_cmd"] or "[grey50]see README / install manually[/]"
                 t.add_row(s["name"], "[red]missing[/]", hint)
 
-        # ── Action table ──────────────────────────────────────────────────
         actions = _small_table("Actions")
         actions.add_column("#",      style="bold", width=3, no_wrap=True)
         actions.add_column("Action", overflow="fold")
@@ -1047,8 +1302,8 @@ def menu_check_tools(console: Console) -> None:
 
 def main_loop() -> None:
     console = Console()
-    cfg = load_cfg(Path("config.yaml"))
-    state = AppState()
+    cfg     = load_cfg(Path("config.yaml"))
+    state   = AppState()
 
     while True:
         console.clear()
@@ -1067,7 +1322,7 @@ def main_loop() -> None:
         elif ch == "5":
             console.clear()
             console.print(Panel(
-                "[bold]Slow scans[/] Nikto and Nuclei may take a long time depending on target/WAF/CDN.",
+                "[bold]Slow scans[/] (Nikto / Nuclei / Dalfox / sqlmap) may take a long time.",
                 border_style="yellow", padding=(0, 1),
             ))
             if prompt(console, "Continue? [y/N]", "N").strip().lower() == "y":
@@ -1094,15 +1349,15 @@ def default(ctx: typer.Context) -> None:
 
 @app.command("scan")
 def scan_cmd(
-    target:        str           = typer.Argument(...,   help="Target IP/domain/URL"),
-    profile:       str           = typer.Option("fast",  help="Scan profile: fast|balanced|deep"),
-    steps:         str           = typer.Option("all",   "--steps",         help="Comma-separated steps or 'all'"),
-    out_root:      str           = typer.Option("./scans","--out",           help="Output directory"),
-    parallel:      bool          = typer.Option(True,    "--parallel/--no-parallel", help="Run steps in parallel"),
-    json_out:      bool          = typer.Option(False,   "--json",           is_flag=True, help="Print summary JSON to stdout"),
-    seclists:      Optional[str] = typer.Option(None,    "--seclists",       help="SecLists path"),
-    fail_fast:     bool          = typer.Option(False,   "--fail-fast",      help="Stop on first failure"),
-    skip_existing: bool          = typer.Option(False,   "--skip-existing",  help="Skip existing artifacts"),
+    target:        str           = typer.Argument(...,    help="Target IP/domain/URL"),
+    profile:       str           = typer.Option("fast",   help="Scan profile: fast|balanced|deep"),
+    steps:         str           = typer.Option("all",    "--steps",        help="Comma-separated steps or 'all'"),
+    out_root:      str           = typer.Option("./scans","--out",          help="Output directory"),
+    parallel:      bool          = typer.Option(True,     "--parallel/--no-parallel", help="Run steps in parallel"),
+    json_out:      bool          = typer.Option(False,    "--json",         is_flag=True, help="Print summary JSON to stdout"),
+    seclists:      Optional[str] = typer.Option(None,     "--seclists",     help="SecLists path"),
+    fail_fast:     bool          = typer.Option(False,    "--fail-fast",    help="Stop on first failure"),
+    skip_existing: bool          = typer.Option(False,    "--skip-existing",help="Skip existing artifacts"),
 ) -> None:
     """Run a scan non-interactively (CLI / CI mode)."""
     from io import StringIO
@@ -1123,8 +1378,7 @@ def scan_cmd(
     planned = plan_steps(state)
 
     if json_out:
-        # Suppress Rich TUI output; print summary JSON to stdout
-        quiet = Console(file=StringIO(), force_terminal=False)
+        quiet   = Console(file=StringIO(), force_terminal=False)
         run_dir = run_steps(planned, state, cfg, quiet)
         sp = run_dir / "reports" / "summary.json"
         typer.echo(
@@ -1175,7 +1429,7 @@ def serve_cmd(
                 _jobs[run_id]["status"] = "running"
             planned = plan_steps(state)
             run_dir = run_steps(planned, state, cfg, quiet)
-            sp = run_dir / "reports" / "summary.json"
+            sp      = run_dir / "reports" / "summary.json"
             summary = json.loads(sp.read_text(encoding="utf-8")) if sp.exists() else {}
             with _jobs_lock:
                 _jobs[run_id].update({"status": "done", "summary": summary, "run_dir": str(run_dir)})
@@ -1205,10 +1459,8 @@ def serve_cmd(
         )
         with _jobs_lock:
             _jobs[run_id] = {
-                "run_id":  run_id,
-                "status":  "queued",
-                "target":  req.target,
-                "profile": req.profile,
+                "run_id": run_id, "status": "queued",
+                "target": req.target, "profile": req.profile,
             }
         threading.Thread(target=_run_scan_bg, args=(run_id, state), daemon=True).start()
         return {"run_id": run_id, "status": "queued"}
